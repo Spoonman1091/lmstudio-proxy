@@ -1,0 +1,123 @@
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      # LAN-only publish; Caddy is the only service reachable from the network.
+      - "${LAN_IP}:8443:8443"
+    environment:
+      LAN_IP: ${LAN_IP}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - litellm
+      - openwebui
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports:
+      # Admin UI / key management: this Mac only.
+      - "127.0.0.1:4000:4000"
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      STORE_MODEL_IN_DB: "False"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: litellm
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    restart: unless-stopped
+    # No published ports: reachable only by Open WebUI on the compose network.
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    restart: unless-stopped
+    environment:
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+      OPENAI_API_BASE_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${OPENWEBUI_LITELLM_KEY}
+      ENABLE_OLLAMA_API: "False"
+      # Send the signed-in user's name with each request so logs can attribute it.
+      ENABLE_FORWARD_USER_INFO_HEADERS: "True"
+      # New accounts need admin approval.
+      DEFAULT_USER_ROLE: pending
+      # Accounts are created by the admin (Admin Panel > Users > Add User).
+      ENABLE_SIGNUP: "False"
+      # Local speech-to-text (audio never leaves this machine).
+      AUDIO_STT_ENGINE: ""
+      WHISPER_MODEL: base
+      DEFAULT_MODELS: qwen3.6-35b-a3b
+      # Model access is enforced by LiteLLM (per-key model lists), so let every
+      # signed-in user see the models LiteLLM returns.
+      BYPASS_MODEL_ACCESS_CONTROL: "True"
+    volumes:
+      - openwebui_data:/app/backend/data
+    depends_on:
+      - litellm
+      - kokoro
+
+  reviewer:
+    build: ./reviewer
+    restart: unless-stopped
+    # Reviews new prompts with the local model and emails alerts (see README).
+    environment:
+      TZ: ${TZ:-UTC}
+      REVIEWER_DB_URL: postgresql://reviewer:${REVIEWER_DB_PASSWORD}@postgres:5432/litellm
+      REVIEWER_LM_URL: http://host.docker.internal:1234/v1
+      REVIEWER_MODEL: qwen/qwen3.6-35b-a3b
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      ALERT_FROM: ${ALERT_FROM:-}
+      ALERT_TO: ${ALERT_TO:-}
+      ALERT_MIN_SEVERITY: ${ALERT_MIN_SEVERITY:-2}
+      DIGEST_HOUR: ${DIGEST_HOUR:-20}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - reviewer_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pg_data:
+  openwebui_data:
+  reviewer_data:

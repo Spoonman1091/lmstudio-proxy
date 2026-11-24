@@ -1,0 +1,28 @@
+model_list:
+  - model_name: qwen3.6-35b-a3b
+    litellm_params:
+      model: openai/qwen/qwen3.6-35b-a3b
+      api_base: http://host.docker.internal:1234/v1
+      api_key: lm-studio
+
+  - model_name: qwen3.8-27b
+    litellm_params:
+      model: openai/qwen/qwen3.8-27b
+      api_base: http://host.docker.internal:1234/v1
+      api_key: lm-studio
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  # Open WebUI sends the signed-in user's name with every request; record it as
+  # the end user so logs can be filtered per child (kids' API keys already
+  # identify themselves by key alias).
+  user_header_name: X-OpenWebUI-User-Name
+  # Log full prompts and responses so they can be reviewed in the admin UI.
+  store_prompts_in_spend_logs: true
+  # Delete spend/prompt logs older than this.
+  maximum_spend_logs_retention_period: "30d"
+  maximum_spend_logs_retention_interval: "1d"
+
+litellm_settings:
+  drop_params: true

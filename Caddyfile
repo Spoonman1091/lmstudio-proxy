@@ -1,0 +1,24 @@
+{
+	# Clients connecting by IP send no SNI; serve the LAN IP cert by default.
+	default_sni {$LAN_IP}
+	auto_https disable_redirects
+}
+
+{$LAN_IP}:8443 {
+	tls internal
+
+	# API clients (coding tools, SDKs): LiteLLM handles keys + prompt logging.
+	# Only /v1/* is exposed; the LiteLLM admin UI stays on localhost.
+	handle /v1/* {
+		reverse_proxy litellm:4000 {
+			flush_interval -1
+		}
+	}
+
+	# Everything else: Open WebUI chat (voice input, read-aloud).
+	handle {
+		reverse_proxy openwebui:8080 {
+			flush_interval -1
+		}
+	}
+}
