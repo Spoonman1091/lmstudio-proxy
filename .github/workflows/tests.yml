@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: the tests only need to read the repository.
+permissions:
+  contents: read
+
+jobs:
+  reviewer-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: reviewer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test tools
+        run: pip install pytest pytest-cov
+      - name: Run unit tests with coverage
+        run: python -m pytest -q --cov=watch --cov-report=term-missing --cov-fail-under=80
