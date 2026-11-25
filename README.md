@@ -1,33 +1,47 @@
 # LM Studio family proxy
 
-Gives family devices on the home network safe, logged access to the model
-running in LM Studio ("Bionic") on this Mac. Everything runs in Docker Compose;
-nothing is installed on the host.
+Gives family devices safe, logged access to the model running in LM Studio
+("Bionic") on this Mac. The proxy, logging and review run here in Docker Compose;
+the chat UI (Open WebUI with voice) runs on a separate Docker host and is reached
+over Tailscale (see [Chat UI](#chat-ui)). Nothing is installed on this Mac itself.
 
 ```
-Devices (Mac / Android)
-   │  HTTPS :8443  (Caddy local CA, trusted per device)
-   ▼
-Caddy ──/v1/*──▶ LiteLLM :4000 ──▶ LM Studio (host 127.0.0.1:1234)
-   │                  │ per-user API keys, model allow-list,
-   │                  │ rate limits, full prompt/response logs
-   │                  ▼
-   │              Postgres (30-day retention)
-   └──everything else──▶ Open WebUI :8080 ──▶ LiteLLM
-                              │ voice in:  Whisper (built in, local, "base")
-                              └ voice out: Kokoro TTS container (voice bf_emma)
+Phones / laptops ──Tailscale──▶ Open WebUI + Kokoro (Docker host, "DMZ")
+                                       │ HTTPS :8443 (only this one LAN hop is allowed)
+Coding tools / SDKs ───────────────────┤
+   (HTTPS :8443, Caddy local CA)       ▼
+                              Caddy ──/v1/*──▶ LiteLLM :4000 ──▶ LM Studio (host 127.0.0.1:1234)
+                                                  │ per-user API keys, model allow-list,
+                                                  │ rate limits, full prompt/response logs
+                                                  ▼
+                                              Postgres (30-day retention)
 ```
 
-Only Caddy is published on the network (`<LAN_IP>:8443`). LiteLLM's admin
-UI is bound to `127.0.0.1:4000` (this Mac only). Postgres, Open WebUI and
-Kokoro have no published ports.
+Only Caddy is published on the network (`<LAN_IP>:8443`), and it serves `/v1/*`
+only (anything else is a 404). LiteLLM's admin UI is bound to `127.0.0.1:4000`
+(this Mac only). Postgres has no published port.
+
+## Chat UI
+
+Open WebUI (with Whisper speech-to-text and Kokoro text-to-speech) runs on the
+Docker host described in <https://github.com/Spoonman1091/media-center-docker>
+(`stacks/open-webui`), not on this Mac. It reaches this proxy at
+`https://<LAN_IP>:8443/v1` with its own LiteLLM key (alias `openwebui-dmz`,
+one model, rate limited), and the host's firewall lets that stack reach nothing
+else on the LAN. Family devices open it through Tailscale Serve.
+
+The `openwebui` and `kokoro` services remain in `compose.yml` under the
+`local-ui` profile as a rollback: `docker compose --profile local-ui up -d`,
+and restore the catch-all `reverse_proxy openwebui:8080` route in the
+`Caddyfile`. They are not started by default. Their data volume
+(`lmstudio-proxy_openwebui_data`) is the pre-migration backup.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `compose.yml` | The whole stack (caddy, litellm, postgres, kokoro, openwebui) |
-| `Caddyfile` | TLS (`tls internal`) and routing: `/v1/*` → LiteLLM, rest → Open WebUI |
+| `compose.yml` | The stack (caddy, litellm, postgres, reviewer); kokoro/openwebui under the `local-ui` rollback profile |
+| `Caddyfile` | TLS (`tls internal`) and routing: `/v1/*` → LiteLLM, rest → 404 |
 | `litellm_config.yaml` | Model list, prompt logging, 30-day log retention |
 | `reviewer/` | Prompt-review service: source, tests, Dockerfile (see "Prompt review") |
 | `.env` | Secrets, LAN IP and SMTP settings (mode 600, git-ignored). Never share or commit |
@@ -43,7 +57,7 @@ Run these from this folder.
 docker compose ps                  # status
 docker compose up -d               # start / apply compose.yml changes
 docker compose restart litellm     # required after editing litellm_config.yaml
-docker compose logs -f litellm     # follow logs (also: openwebui, caddy, kokoro)
+docker compose logs -f litellm     # follow logs (also: caddy, reviewer)
 docker compose down                # stop (data volumes are kept)
 ```
 
@@ -77,8 +91,8 @@ Re-export the CA if ever needed:
 
 ## Users and keys
 
-**Open WebUI accounts.** Signup is disabled. Admin Panel → Users → Add User;
-give kids the role *User*, not Admin.
+**Open WebUI accounts** (on the Docker host's instance). Signup is disabled.
+Admin Panel → Users → Add User; give kids the role *User*, not Admin.
 
 **LiteLLM keys** (API access, prompt logging). Create one per person:
 
@@ -113,6 +127,8 @@ changing it. Turning it off makes replies faster but may reduce quality on
 hard coding or maths questions.
 
 ## Voice
+
+Both run on the Docker host with Open WebUI, not on this Mac.
 
 - **Speech to text:** Open WebUI's built-in Whisper (`base`), runs locally in
   the Open WebUI container. The model downloads on first use.
@@ -182,9 +198,9 @@ through this proxy, and its reply can be slow when the 35B model is busy
 - **Open WebUI saves settings in its database after first launch.** Environment
   variables (e.g. `DEFAULT_MODELS`, audio engine) only apply the first time.
   Change them in the UI, or edit the `config` table in `webui.db`.
-- **Editing the database:** stop Open WebUI first (`docker compose stop
-  openwebui`), copy `webui.db`, `webui.db-wal` and `webui.db-shm` somewhere,
-  make the change, then start it again. The volume is `lmstudio-proxy_openwebui_data`.
+- **Editing the database:** stop Open WebUI first, copy `webui.db`,
+  `webui.db-wal` and `webui.db-shm` somewhere, make the change, then start it
+  again. The live data is `/opt/docker/open-webui/data` on the Docker host.
 - **Per-user audio settings** live in `user.settings` (`ui.audio.tts`) and
   override the server config.
 - LiteLLM only reads `litellm_config.yaml` at startup; restart it after edits.

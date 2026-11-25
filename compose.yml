@@ -13,7 +13,6 @@ services:
       - caddy_config:/config
     depends_on:
       - litellm
-      - openwebui
 
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
@@ -50,12 +49,18 @@ services:
       timeout: 5s
       retries: 10
 
+  # kokoro and openwebui: retired from this Mac. The chat UI now runs on the Docker
+  # host (stacks/open-webui in media-center-docker) behind Tailscale. They stay here
+  # under a profile as a rollback: `docker compose --profile local-ui up -d`
+  # (also restore the catch-all route in the Caddyfile).
   kokoro:
+    profiles: [local-ui]
     image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
     restart: unless-stopped
     # No published ports: reachable only by Open WebUI on the compose network.
 
   openwebui:
+    profiles: [local-ui]
     image: ghcr.io/open-webui/open-webui:main
     restart: unless-stopped
     environment:

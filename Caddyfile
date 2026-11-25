@@ -15,10 +15,8 @@
 		}
 	}
 
-	# Everything else: Open WebUI chat (voice input, read-aloud).
+	# The chat UI no longer lives here (it runs on the Docker host behind Tailscale).
 	handle {
-		reverse_proxy openwebui:8080 {
-			flush_interval -1
-		}
+		respond "Not found" 404
 	}
 }
